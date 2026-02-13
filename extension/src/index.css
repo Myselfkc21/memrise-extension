@@ -1,0 +1,78 @@
+@import "tailwindcss";
+
+/* Retro 80s/90s Theme */
+@layer base {
+  :root {
+    --neon-cyan: #00ffff;
+    --neon-pink: #ff00ff;
+    --neon-yellow: #ffff00;
+    --neon-green: #00ff00;
+    --retro-purple: #8b00ff;
+    --retro-blue: #0080ff;
+    --retro-dark: #0a0a0a;
+    --retro-dark-purple: #1a0033;
+  }
+
+  body {
+    @apply bg-black text-white antialiased;
+    font-family: 'Courier New', 'MS Sans Serif', monospace;
+    image-rendering: pixelated;
+  }
+
+  /* CRT Scanline Effect */
+  body::before {
+    content: '';
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: repeating-linear-gradient(
+      0deg,
+      rgba(0, 0, 0, 0.15),
+      rgba(0, 0, 0, 0.15) 1px,
+      transparent 1px,
+      transparent 2px
+    );
+    pointer-events: none;
+    z-index: 9999;
+  }
+
+  /* Retro Glow Effect */
+  @keyframes neon-glow {
+    0%, 100% {
+      text-shadow: 
+        0 0 5px currentColor,
+        0 0 10px currentColor,
+        0 0 15px currentColor,
+        0 0 20px currentColor;
+    }
+    50% {
+      text-shadow: 
+        0 0 2px currentColor,
+        0 0 5px currentColor,
+        0 0 8px currentColor,
+        0 0 12px currentColor;
+    }
+  }
+
+  @keyframes pulse-neon {
+    0%, 100% {
+      opacity: 1;
+      filter: brightness(1);
+    }
+    50% {
+      opacity: 0.8;
+      filter: brightness(1.2);
+    }
+  }
+
+  @keyframes scanline {
+    0% {
+      transform: translateY(0);
+    }
+    100% {
+      transform: translateY(100vh);
+    }
+  }
+}
