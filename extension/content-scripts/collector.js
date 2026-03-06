@@ -941,19 +941,31 @@
 
     function isTextLikeElement(el) {
       if (!el) return false;
-      const tag = (el.tagName || "").toUpperCase();
-      if (tag === "TEXTAREA") return true;
-      if (tag === "INPUT") {
-        const type = (el.type || "text").toLowerCase();
-        return (
-          type === "text" ||
-          type === "search" ||
-          type === "email" ||
-          type === "url" ||
-          type === "password"
-        );
+      try {
+        // In sites like ChatGPT the activeElement is often a deep child inside
+        // the real contenteditable container, so walk up a bit.
+        let cur = el;
+        for (let depth = 0; cur && depth < 6; depth++) {
+          const tag = (cur.tagName || "").toUpperCase();
+          if (tag === "TEXTAREA") return true;
+          if (tag === "INPUT") {
+            const type = (cur.type || "text").toLowerCase();
+            if (
+              type === "text" ||
+              type === "search" ||
+              type === "email" ||
+              type === "url" ||
+              type === "password"
+            ) {
+              return true;
+            }
+          }
+          if (cur.isContentEditable) return true;
+          cur = cur.parentElement;
+        }
+      } catch (e) {
+        // ignore
       }
-      if (el.isContentEditable) return true;
       return false;
     }
 
