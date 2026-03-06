@@ -556,6 +556,16 @@ async function processContextSearch(query, sender) {
   const normalized = arr
     .map((v) => {
       try {
+        // If backend returns rich objects like { content: string, ... },
+        // prefer the `content` field; otherwise fall back to a string cast.
+        if (v && typeof v === "object") {
+          if (typeof v.content === "string" && v.content.trim().length > 0) {
+            return v.content;
+          }
+          if (typeof v.text === "string" && v.text.trim().length > 0) {
+            return v.text;
+          }
+        }
         return String(v);
       } catch (e) {
         return null;

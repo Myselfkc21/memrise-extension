@@ -1132,14 +1132,21 @@
         loading.style.color = "#9ca3af";
         overlayState.results.appendChild(loading);
 
-        safeSendMessage(
+        // For search we *must* use chrome.runtime.sendMessage so we can receive
+        // the response. The collector's long-lived port is fire-and-forget and
+        // does not provide a direct response channel.
+        sendMessageForResponse(
           {
             type: "CONTEXT_SEARCH",
             query,
           },
           (response) => {
             try {
-              if (!response || !response.success || !Array.isArray(response.data)) {
+              if (
+                !response ||
+                !response.success ||
+                !Array.isArray(response.data)
+              ) {
                 renderSearchResults([]);
                 return;
               }
@@ -1151,6 +1158,33 @@
         );
       } catch (e) {
         // ignore send errors
+      }
+    }
+
+    function sendMessageForResponse(message, cb) {
+      try {
+        if (
+          typeof chrome === "undefined" ||
+          !chrome.runtime ||
+          typeof chrome.runtime.sendMessage !== "function"
+        ) {
+          if (typeof cb === "function") cb(null);
+          return;
+        }
+
+        chrome.runtime.sendMessage(message, (response) => {
+          try {
+            if (chrome.runtime.lastError) {
+              if (typeof cb === "function") cb(null);
+              return;
+            }
+            if (typeof cb === "function") cb(response);
+          } catch (e) {
+            if (typeof cb === "function") cb(null);
+          }
+        });
+      } catch (e) {
+        if (typeof cb === "function") cb(null);
       }
     }
 
