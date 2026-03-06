@@ -80,7 +80,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
           } else {
             console.warn(
               "Token data extracted but no access token found:",
-              tokenData
+              tokenData,
             );
           }
         } else {
@@ -181,7 +181,7 @@ function extractAuthTokenFromPage() {
           // Extract the payload object from the script
           const scriptContent = script.textContent;
           const payloadMatch = scriptContent.match(
-            /const payload\s*=\s*({[\s\S]*?});/
+            /const payload\s*=\s*({[\s\S]*?});/,
           );
           if (payloadMatch) {
             // Replace escaped unicode and parse
@@ -234,6 +234,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     });
     return true; // Keep channel open for async response
   }
+
+  if (message.type === "CONTEXT_SEARCH" && typeof message.query === "string") {
+    processContextSearch(message.query, sender)
+      .then((data) => sendResponse({ success: true, data }))
+      .catch((err) =>
+        sendResponse({ success: false, error: String(err || "Unknown error") }),
+      );
+    return true; // keep channel open
+  }
 });
 
 // Create debug context menu items and handlers
@@ -273,7 +282,7 @@ try {
         };
 
         const stored = await new Promise((resolve) =>
-          chrome.storage.local.get(["authToken", "activeProfile"], resolve)
+          chrome.storage.local.get(["authToken", "activeProfile"], resolve),
         );
         const authToken = stored.authToken?.accessToken || null;
         const headers = { "Content-Type": "application/json" };
@@ -283,7 +292,7 @@ try {
           "[background] POST to",
           `${API_BASE}/context/messages`,
           "payload=",
-          testPayload
+          testPayload,
         );
         const resp = await fetch(`${API_BASE}/context/messages`, {
           method: "POST",
@@ -293,7 +302,7 @@ try {
         console.log(
           "[background] Test POST response",
           resp.status,
-          resp.ok ? "OK" : "NOT_OK"
+          resp.ok ? "OK" : "NOT_OK",
         );
         try {
           const body = await resp.text();
@@ -304,7 +313,7 @@ try {
       } catch (e) {
         console.error(
           "[background] Error sending test message from context menu",
-          e
+          e,
         );
       }
       return;
@@ -314,7 +323,7 @@ try {
       try {
         console.log(
           "[background] context menu clicked - injecting test runner into tab",
-          tab?.id
+          tab?.id,
         );
         if (!tab || !tab.id) {
           console.warn("[background] no active tab to inject into");
@@ -334,7 +343,7 @@ try {
               } catch (e) {
                 console.error(
                   "[injected] chrome.runtime.sendMessage failed",
-                  e
+                  e,
                 );
               }
             } catch (e) {
@@ -352,7 +361,7 @@ try {
       try {
         console.log(
           "[background] context menu clicked - injecting MAIN-world probe into tab",
-          tab?.id
+          tab?.id,
         );
         if (!tab || !tab.id) {
           console.warn("[background] no active tab to inject into");
@@ -366,7 +375,7 @@ try {
             try {
               const hostname = location.hostname || "unknown";
               console.log(
-                `[collector-main] initialized on ${hostname} mapped to ${hostname}`
+                `[collector-main] initialized on ${hostname} mapped to ${hostname}`,
               );
 
               try {
@@ -382,7 +391,7 @@ try {
                   if (n && n.length) found += n.length;
                 }
                 console.log(
-                  `[collector-main] probe found sample nodes: ${found}`
+                  `[collector-main] probe found sample nodes: ${found}`,
                 );
               } catch (e) {
                 console.log("[collector-main] probe query error", e);
@@ -408,84 +417,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     message.type === "SEND_CHAT_MESSAGES" &&
     Array.isArray(message.messages)
   ) {
-    // Process messages in background (async) with debug logs
-    (async () => {
-      let sendResponseCalled = false;
-      try {
-        console.log(
-          "[background] received SEND_CHAT_MESSAGES from tabId=",
-          sender?.tab?.id ?? "unknown",
-          "count=",
-          message.messages.length
-        );
-
-        const payloads = message.messages.map((m) => ({
-          text: m.text?.slice(0, 50000) || "",
-          role: m.role === "assistant" ? "assistant" : "user",
-          source:
-            message.source ||
-            (sender?.tab?.url ? new URL(sender.tab.url).hostname : "unknown"),
-          profile_id: message.profile_id ?? null,
-          conversation_id: message.conversation_id ?? null,
-        }));
-
-        // Get auth token (if any) and active profile from storage
-        const stored = await new Promise((resolve) =>
-          chrome.storage.local.get(["authToken", "activeProfile"], resolve)
-        );
-
-        const authToken = stored.authToken?.accessToken || null;
-        const activeProfile = stored.activeProfile ?? null;
-
-        // If caller didn't provide profile_id, use activeProfile
-        for (const p of payloads) {
-          if (!p.profile_id && activeProfile) p.profile_id = activeProfile;
-        }
-
-        // Post each message to backend and log responses
-        for (const p of payloads) {
-          try {
-            const headers = { "Content-Type": "application/json" };
-            if (authToken) headers.Authorization = `Bearer ${authToken}`;
-
-            console.log(
-              "[background] POST to",
-              `${API_BASE}/context/messages`,
-              "payload=",
-              p
-            );
-            const resp = await fetch(`${API_BASE}/context/messages`, {
-              method: "POST",
-              headers,
-              body: JSON.stringify(p),
-            });
-            console.log(
-              "[background] POST response",
-              resp.status,
-              resp.ok ? "OK" : "NOT_OK"
-            );
-          } catch (err) {
-            console.error("Failed to POST context message:", err, p);
-          }
-        }
-        // Acknowledge receipt to sender
-        try {
-          sendResponse({ success: true, sent: payloads.length });
-          sendResponseCalled = true;
-        } catch (e) {
-          // ignore
-        }
-      } catch (e) {
-        console.error("Error processing SEND_CHAT_MESSAGES:", e);
-        try {
-          if (!sendResponseCalled)
-            sendResponse({ success: false, error: String(e) });
-        } catch (e2) {
-          // ignore
-        }
-      }
-    })();
-    // Keep the message channel open to help ensure async work completes
+    // Delegate to shared processor and keep channel open
+    processSendChatMessages(message, sender)
+      .then((count) => sendResponse({ success: true, sent: count }))
+      .catch((err) => sendResponse({ success: false, error: String(err) }));
     return true;
   }
 
@@ -493,7 +428,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     console.log(
       "[background] received INJECTED_TEST from page",
       sender?.tab?.id,
-      message.data
+      message.data,
     );
     // Optionally, reply to the injected script
     try {
@@ -502,5 +437,181 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       // ignore
     }
     return true;
+  }
+});
+
+// Shared processor so both onMessage and onConnect paths can reuse logic
+async function processSendChatMessages(message, sender) {
+  console.log(
+    "[background] received SEND_CHAT_MESSAGES from tabId=",
+    sender?.tab?.id ?? "unknown",
+    "count=",
+    message.messages.length,
+  );
+
+  const sourceHost =
+    message.source ||
+    (sender?.tab?.url ? new URL(sender.tab.url).hostname : "unknown");
+
+  const filtered = (message.messages || []).filter(
+    (m) => m && (m.role === "assistant" || m.role === "user"),
+  );
+
+  const payloads = filtered.map((m) => ({
+    text: m.text?.slice(0, 50000) || "",
+    role: m.role === "assistant" ? "assistant" : "user",
+    source: sourceHost,
+    profile_id: message.profile_id ?? null,
+    conversation_id: message.conversation_id ?? null,
+  }));
+
+  console.log(
+    "[background] filtered messages count:",
+    payloads.length,
+    "(only user/assistant will be forwarded)",
+  );
+
+  const stored = await new Promise((resolve) =>
+    chrome.storage.local.get(["authToken", "activeProfile"], resolve),
+  );
+  const authToken = stored.authToken?.accessToken || null;
+  const activeProfile = stored.activeProfile ?? null;
+
+  for (const p of payloads) {
+    if (!p.profile_id && activeProfile) p.profile_id = activeProfile;
+  }
+
+  for (const p of payloads) {
+    try {
+      const headers = { "Content-Type": "application/json" };
+      if (authToken) headers.Authorization = `Bearer ${authToken}`;
+      console.log(
+        "[background] POST to",
+        `${API_BASE}/context/messages`,
+        "payload=",
+        p,
+      );
+      const resp = await fetch(`${API_BASE}/context/messages`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(p),
+      });
+      console.log(
+        "[background] POST response",
+        resp.status,
+        resp.ok ? "OK" : "NOT_OK",
+      );
+    } catch (err) {
+      console.error("Failed to POST context message:", err, p);
+    }
+  }
+
+  return payloads.length;
+}
+
+// Handle /context/search lookups from the content script
+async function processContextSearch(query, sender) {
+  console.log(
+    "[background] received CONTEXT_SEARCH from tabId=",
+    sender?.tab?.id ?? "unknown",
+    "query=",
+    query,
+  );
+
+  const stored = await new Promise((resolve) =>
+    chrome.storage.local.get(["authToken", "activeProfile"], resolve),
+  );
+  const authToken = stored.authToken?.accessToken || null;
+  const activeProfile = stored.activeProfile ?? null;
+
+  const params = new URLSearchParams();
+  params.set("text", query);
+  if (activeProfile != null) {
+    params.set("profile_id", String(activeProfile));
+  }
+
+  const url = `${API_BASE}/context/search?${params.toString()}`;
+  const headers = {};
+  if (authToken) headers.Authorization = `Bearer ${authToken}`;
+
+  console.log("[background] GET", url);
+
+  const resp = await fetch(url, {
+    method: "GET",
+    headers,
+  });
+
+  if (!resp.ok) {
+    throw new Error(`Search failed with status ${resp.status}`);
+  }
+
+  let json;
+  try {
+    json = await resp.json();
+  } catch (e) {
+    throw new Error("Failed to parse search response JSON");
+  }
+
+  const arr = Array.isArray(json?.data) ? json.data : [];
+  const normalized = arr
+    .map((v) => {
+      try {
+        return String(v);
+      } catch (e) {
+        return null;
+      }
+    })
+    .filter(Boolean)
+    .slice(0, 3);
+
+  console.log(
+    "[background] CONTEXT_SEARCH results count=",
+    normalized.length,
+  );
+
+  return normalized;
+}
+
+// Also accept long-lived connections from content scripts which are more reliable
+// for waking MV3 service workers and keeping them alive while the page is open.
+chrome.runtime.onConnect.addListener((port) => {
+  try {
+    if (!port || port.name !== "contextkeeper-collector") return;
+    console.log("[background] collector port connected");
+    try {
+      // notify the collector that the background is ready to receive pending messages
+      try {
+        port.postMessage({ type: "COLLECTOR_READY" });
+      } catch (e) {
+        // ignore
+      }
+    } catch (e) {
+      // ignore
+    }
+    port.onMessage.addListener((message) => {
+      if (message && message.type === "SEND_CHAT_MESSAGES") {
+        // process and optionally send ack over the port
+        processSendChatMessages(message, { tab: { id: null } })
+          .then((count) => {
+            try {
+              port.postMessage({ success: true, sent: count });
+            } catch (e) {
+              // ignore
+            }
+          })
+          .catch((err) => {
+            try {
+              port.postMessage({ success: false, error: String(err) });
+            } catch (e) {
+              // ignore
+            }
+          });
+      }
+    });
+    port.onDisconnect.addListener(() => {
+      console.log("[background] collector port disconnected");
+    });
+  } catch (e) {
+    console.error("Error handling collector port connection", e);
   }
 });
