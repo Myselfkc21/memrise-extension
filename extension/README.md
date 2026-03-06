@@ -1,198 +1,174 @@
-# ContextKeeper Chrome Extension
+## ContextKeeper Chrome Extension
 
-A production-ready Chrome extension built with React for AI memory management.
+ContextKeeper is a Chrome extension that captures and searches conversational context from sites like ChatGPT and sends it to a backend service for long‑term storage and retrieval.  
+It ships as a React + Vite popup UI plus a Manifest V3 background service worker and content script collector.
 
-## Features
+### Core capabilities
 
-- 🔐 Google OAuth authentication
-- 🧠 AI memory management
-- 📊 Profile management
-- ⚡ Real-time backend connection status
+- **Context capture**
+  - Content script (`content-scripts/collector.js`) observes supported chat sites and extracts individual messages.
+  - Messages are normalized and sent to the background worker as `{ text, role, source, conversation_id }`.
+  - The background worker forwards these to the backend API at `http://[::1]:4002/context/messages`.
 
-## Development
+- **Inline context search**
+  - Typing the special sequence `&#` inside a supported chat input opens a floating search bar on the page.
+  - User-entered search text is sent to `GET /context/search?text=...&profile_id=...`.
+  - The top 3 results are displayed in a floating panel; clicking one injects the selected text back into the chat input.
+
+- **Authentication and profiles**
+  - Google OAuth flow handled via the backend; `background.js` extracts and persists tokens from the callback page.
+  - The popup UI (`src/App.jsx`) allows sign‑in/out and profile selection/creation.
+  - The active profile id is stored in `chrome.storage.local` and attached to outbound context messages and searches.
+
+## Architecture overview
+
+- **Popup UI (React + Vite)**
+  - `src/App.jsx` – main popup surface.
+  - `src/components/` – `AuthSection`, profile management components, status bar, toast system.
+  - `src/hooks/` – `useAuth`, `useProfiles`, `useToast`, etc.
+  - Communicates with the background worker via `chrome.runtime.sendMessage` for auth status.
+
+- **Background service worker (`background.js`)**
+  - Handles:
+    - Google OAuth callback extraction and token normalization.
+    - Receiving `SEND_CHAT_MESSAGES` from content scripts and POSTing to `/context/messages`.
+    - Handling `CONTEXT_SEARCH` from the content script and proxying to `/context/search`.
+    - Managing a long‑lived port for more reliable message delivery from the collector.
+    - Debug context menu items for manual test POSTs and collector probes.
+
+- **Content script collector (`content-scripts/collector.js`)**
+  - Observes DOM mutations on supported hosts.
+  - Extracts visible, in‑box chat messages only using heuristics and selectors.
+  - Deduplicates messages via hashed history stored in `chrome.storage.local`.
+  - Uses `chrome.runtime.connect` + `postMessage` and a retry queue for reliable delivery.
+  - Implements the `&#` trigger search overlay and injection of chosen snippets into the site’s chat input.
+
+- **Manifest**
+  - `manifest.json` – MV3 manifest wiring:
+    - `background.service_worker: background.js`
+    - `content_scripts: [collector.js]` on supported chat domains.
+    - Required permissions: `activeTab`, `storage`, `tabs`, `scripting`, `contextMenus`.
+
+## Backend integration
+
+- **API base URL**
+  - Currently hard‑coded as:
+    - `background.js`: `const API_BASE = "http://[::1]:4002";`
+  - Endpoints used:
+    - `POST /context/messages` – create context messages.
+    - `GET /context/search` – search context messages (`text`, `profile_id` query params).
+    - Auth‑related endpoints such as `/auth/google/callback` and `/auth/refresh` (via the popup bundle).
+
+- **Expected search response**
+
+  The search handler expects the backend to respond with:
+
+  ```json
+  {
+    "success": 1,
+    "message": "Data found successfully",
+    "data": [
+      {
+        "role": "assistant",
+        "content": "…",
+        "refusal": null,
+        "annotations": []
+      }
+    ]
+  }
+  ```
+
+  The background worker normalizes this to an array of strings (preferring `content` or `text`) and returns it to the content script to display.
+
+## Development workflow
 
 ### Prerequisites
 
 - Node.js 18+ and npm
-- Chrome browser
+- Chrome (or any Chromium‑based browser)
+- Backend service running at `http://[::1]:4002`
 
-### Setup
-
-1. Install dependencies:
+### Install dependencies
 
 ```bash
 npm install
 ```
 
-2. Build the extension:
-
-```bash
-npm run build
-```
-
-3. Load the extension in Chrome:
-   - Open Chrome and navigate to `chrome://extensions/`
-   - Enable "Developer mode" (toggle in top right)
-   - Click "Load unpacked"
-   - Select the `dist` folder from this project
-
-### Development Mode
-
-For development with hot reload:
+### Run popup in development mode
 
 ```bash
 npm run dev
 ```
 
-Note: You'll need to rebuild and reload the extension after making changes.
+This starts Vite for the popup UI. For the extension itself you still need to load the built artifacts into Chrome.
 
-## Project Structure
+### Build the extension
 
-```
-extension/
-├── src/
-│   ├── components/      # React components
-│   ├── hooks/           # Custom React hooks
-│   ├── utils/           # Utility functions
-│   ├── App.jsx          # Main app component
-│   └── main.jsx         # Entry point
-├── background.js         # Service worker (background script)
-├── manifest.json        # Chrome extension manifest
-├── vite.config.js       # Vite build configuration
-└── package.json         # Dependencies and scripts
+```bash
+npm run build
 ```
 
-## Building for Production
+or, to run the full extension build flow:
 
 ```bash
 npm run build:extension
 ```
 
-The built extension will be in the `dist` folder, ready to be loaded in Chrome or packaged for distribution.
+The output is placed in `dist/`.
 
-## Configuration
+### Load the extension in Chrome
 
-The extension connects to a backend API. Update the API base URL in:
+1. Open `chrome://extensions/`.
+2. Enable **Developer mode**.
+3. Click **Load unpacked**.
+4. Select the `dist` directory from this project.
 
-- `src/utils/api.js` - API client configuration
-- `background.js` - Background script API calls
+After you make changes and rebuild, click **Reload** on the extension in `chrome://extensions/`.
 
-Default API base: `http://[::1]:4002`
+## Project structure
+
+```text
+extension/
+├─ manifest.json         # MV3 manifest
+├─ background.js         # service worker: auth, API integration, messaging
+├─ content-scripts/
+│  └─ collector.js       # in‑page collector + floating search overlay
+├─ src/
+│  ├─ App.jsx            # popup root component
+│  ├─ main.jsx           # React entry point
+│  ├─ components/        # UI components (auth, profiles, status, toast)
+│  ├─ hooks/             # custom hooks (auth, profiles, toast, etc.)
+│  └─ utils/             # shared client utilities
+├─ public/               # static assets
+├─ package.json          # scripts and dependencies
+└─ vite.config.js        # Vite configuration
+```
+
+## Troubleshooting
+
+- **No requests hit the backend**
+  - Ensure the backend is running on `http://[::1]:4002`.
+  - Check the **background page console** (via `chrome://extensions` → “Service worker” link) for logs:
+    - `POST to http://[::1]:4002/context/messages …`
+    - `GET http://[::1]:4002/context/search?...`
+
+- **Search overlay shows `[object Object]`**
+  - The normalizer in `background.js` expects `data[i].content` or `data[i].text`. Verify the backend response matches this shape.
+
+- **`&#` trigger does nothing**
+  - Confirm the content script is loaded on the active tab (check `manifest.json` `matches`).
+  - Check the console for `[collector]` logs to verify initialization.
+
+- **Auth appears stuck**
+  - Verify the backend auth routes and redirect URLs match `http://[::1]:4002`.
+  - Clear `chrome.storage.local` keys `authToken` and `authTokenReceived` and retry sign‑in.
+
+## Security and privacy
+
+- Tokens are stored in `chrome.storage.local` under `authToken`.
+- Context messages and search queries are sent to your backend; you are responsible for storage, access control, and retention policies on the server side.
+- Do not log sensitive payloads in production builds of the backend.
 
 ## License
 
-## 🎒 ContextKeeper — Chrome extension
-
-ContextKeeper is a small-but-mighty Chrome extension built with React + Vite that helps you attach, manage, and recall contextual memories using an AI-backed backend. Think of it as sticky notes for your browsing context — only smarter. 🧠✨
-
-Whether you're a student saving interesting examples, a developer collecting reproducible bugs, or a curious reader capturing short-term memory for later review, ContextKeeper stores and surfaces relevant snippets when you need them.
-
-### Why it exists
-
-- Browsers forget. People forget. ContextKeeper bridges that gap by pairing lightweight client-side UI with an AI-powered memory service so your important context stays attached to the things you discover online.
-
-## 🚀 Key features
-
-- 🔐 Google OAuth sign-in
-- 🧠 AI memory management (store, search, and recall contexts)
-- 🎭 Multiple profiles for separation of concerns (work, study, personal)
-- ⚡ Background service worker + content-collector for passive capture
-- 🔔 Toasts, status bar and a small profile modal for quick interactions
-
-## 🎯 Use cases
-
-- Save code snippets and relevant tabs while researching a bug.
-- Collect interesting quotes and auto-summarize them for later review.
-- Keep task-related context attached to specific websites.
-
-## 🧩 Quick start (developer)
-
-Prerequisites:
-
-- Node.js 18+ and npm
-- Chrome (Chromium-based browser also works)
-
-Install dependencies:
-
-```bash
-npm install
-```
-
-Run in dev mode (hot reload for the UI):
-
-```bash
-npm run dev
-```
-
-Build the extension for production (outputs to `dist/`):
-
-```bash
-npm run build
-```
-
-Load the unpacked extension in Chrome:
-
-1. Open chrome://extensions/
-2. Enable Developer mode (top-right)
-3. Click "Load unpacked" and select the `dist/` folder
-
-Pro tip: during development you can keep the DevTools open for the extension UI and reload the unpacked extension when the build updates.
-
-## 🛠 Project layout
-
-Top-level files you’ll care about:
-
-```
-extension/
-├─ background.js           # service worker / background script (handles auth, API calls)
-├─ manifest.json           # Chrome extension manifest
-├─ src/
-│  ├─ App.jsx              # main React UI
-│  ├─ main.jsx             # React entry + mounting
-│  ├─ components/          # UI building blocks (AuthSection, ProfileModal, etc.)
-│  ├─ hooks/               # small reusable hooks (useAuth, useProfiles, useToast)
-│  └─ utils/               # api client, storage helpers, profile logic
-├─ public/                 # static assets
-└─ package.json            # scripts and dependencies
-```
-
-## ⚙️ Configuration
-
-- Default API base URL is configured in `src/utils/api.js`. If you run a local backend, point the client there.
-- Background script (`background.js`) also contains calls that rely on the same backend.
-
-If your backend runs on a custom host/port, update the base URL (or use environment configs in future PRs).
-
-## 🧪 Tests & validation
-
-This repository includes a tiny client UI and background logic. There are no automated tests bundled by default — adding unit tests for hooks and integration tests for the background script is a highly recommended follow-up.
-
-## 🧭 Troubleshooting
-
-- If the extension fails to authenticate: confirm OAuth credentials and redirect URIs in the backend and Google Cloud Console.
-- If API calls fail: open `background.js` console in the Extensions page and check the network endpoints.
-- If hot reload seems stale: stop dev server, clear `dist/`, then `npm run dev` again.
-
-## 🤝 Contributing
-
-Contributions are welcome! Small, focused PRs are easiest to review. Good first contributions:
-
-- Add unit tests for a hook in `src/hooks/`
-- Improve error handling in `src/utils/api.js`
-- Add a basic end-to-end smoke test that runs the build and verifies `dist/` contains the manifest
-
-Please include a short description of the change and a screenshot if the UI is affected.
-
-## 🧾 License & privacy
-
-This repository is currently private. The extension integrates with a backend that may store user content; treat user data carefully and follow your organization's privacy policy.
-
----
-
-If you'd like, I can also:
-
-- Add a short CONTRIBUTING.md and ISSUE_TEMPLATE.md
-- Wire up a simple test runner (Jest + React Testing Library) with a couple of initial tests
-- Add a short demo GIF for the README
-
-Want me to add any of those? Pick one and I’ll implement it next.
+This codebase is currently private and intended for internal use. If you plan to open‑source or distribute it, add an explicit license here (for example, MIT or Apache‑2.0) and ensure backend data handling complies with your organization’s privacy guidelines.
